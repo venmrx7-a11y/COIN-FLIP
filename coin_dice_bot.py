@@ -2,13 +2,12 @@ import random
 import json
 import os
 import threading
-import re
 from datetime import datetime
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ============ FLASK FOR RENDER ============
+# ============ FLASK ============
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -28,6 +27,10 @@ USERS_FILE = "users.json"
 STATS_FILE = "stats.json"
 FORCE_FILE = "force.json"
 EMOJI_FILE = "emojis.json"
+
+# ============ FIXED COIN PATTERN ============
+COIN_PATTERN = ['HEAD', 'TAIL', 'TAIL', 'HEAD', 'HEAD', 'HEAD', 'TAIL', 'HEAD', 'HEAD', 'TAIL', 'TAIL', 'HEAD', 'TAIL']
+pattern_index = 0
 
 # ============ PREMIUM EMOJIS ============
 PREMIUM_EMOJIS = {
@@ -77,7 +80,7 @@ def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
             return json.load(f)
-    return {"coin_flips": 0, "dice_rolls": 0, "head_count": 0, "tail_count": 0}
+    return {"coin_flips": 0, "dice_rolls": 0}
 
 def save_stats(stats):
     with open(STATS_FILE, 'w') as f:
@@ -85,25 +88,13 @@ def save_stats(stats):
 
 def load_force():
     if os.path.exists(FORCE_FILE):
-        with open(STRUE_FILE, 'r') as f:
+        with open(FORCE_FILE, 'r') as f:
             return json.load(f)
-    return {"coin_force": None, "coin_force_count": 0, "dice_force": None}
+    return {"user_forces": {}}
 
 def save_force(force):
     with open(FORCE_FILE, 'w') as f:
         json.dump(force, f, indent=2)
-
-def load_emojis():
-    global PREMIUM_EMOJIS
-    try:
-        if os.path.exists(EMOJI_FILE):
-            with open(EMOJI_FILE, 'r', encoding='utf-8') as f:
-                loaded = json.load(f)
-                for key, value in loaded.items():
-                    if key not in PREMIUM_EMOJIS:
-                        PREMIUM_EMOJIS[key] = value
-    except:
-        pass
 
 def get_emoji_html(name):
     if name in PREMIUM_EMOJIS:
@@ -119,7 +110,6 @@ def get_random_emoji():
     return get_emoji_html(random_name)
 
 def format_with_double_emojis(text):
-    """Har line ke aage aur piche premium emoji lagao"""
     lines = text.split('\n')
     formatted_lines = []
     for line in lines:
@@ -134,7 +124,6 @@ def format_with_double_emojis(text):
 users = load_users()
 stats = load_stats()
 force = load_force()
-load_emojis()
 
 # ============ STYLISH TEXT ============
 def to_fancy(text):
@@ -156,10 +145,7 @@ def register_user(user_id, username, first_name):
             "username": username,
             "name": first_name,
             "joined": str(datetime.now()),
-            "banned": False,
-            "coin_wins": 0,
-            "coin_losses": 0,
-            "dice_plays": 0
+            "banned": False
         }
         save_users(users)
         return True
@@ -172,101 +158,92 @@ def is_banned(user_id):
     user = users.get(str(user_id), {})
     return user.get('banned', False)
 
-# ============ OWNER COMMANDS (Hidden from users) ============
-async def force_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ============ GET NEXT COIN RESULT ============
+def get_next_coin():
+    global pattern_index
+    result = COIN_PATTERN[pattern_index % len(COIN_PATTERN)]
+    pattern_index += 1
+    return result
+
+# ============ OWNER COMMANDS ============
+async def set_user_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner: /userforce USER_ID head 5"""
     if update.effective_user.id != OWNER_ID:
         return
     
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /forcecoin head 5 OR /forcecoin tail 3 OR /forcecoin off")
+    if len(context.args) < 3:
+        await update.message.reply_text(
+            "Usage:\n"
+            "/userforce USER_ID head 5 - User ko 5 baar HEAD milega\n"
+            "/userforce USER_ID tail 3 - User ko 3 baar TAIL milega\n"
+            "/userforce USER_ID dice 6 - User ko dice 6 milega\n"
+            "/userforce USER_ID off - User ka force hatana"
+        )
         return
     
-    result = context.args[0].lower()
-    if result == 'off':
-        force["coin_force"] = None
-        force["coin_force_count"] = 0
-        save_force(force)
-        await update.message.reply_text("Force mode OFF!")
-        return
-    
-    if result not in ['head', 'tail']:
-        await update.message.reply_text("Use 'head' or 'tail'!")
-        return
-    
+    user_id = context.args[0]
+    force_type = context.args[1].lower()
     try:
-        count = int(context.args[1])
-        if count < 1 or count > 10:
-            await update.message.reply_text("Count must be 1-10!")
-            return
+        count = int(context.args[2])
     except:
         await update.message.reply_text("Invalid count!")
         return
     
-    force["coin_force"] = result
-    force["coin_force_count"] = count
+    if user_id not in users:
+        await update.message.reply_text(f"User {user_id} not found!")
+        return
+    
+    if force_type not in ['head', 'tail', 'dice']:
+        await update.message.reply_text("Use: head, tail, or dice")
+        return
+    
+    if count < 1 or count > 10:
+        await update.message.reply_text("Count must be 1-10!")
+        return
+    
+    if 'user_forces' not in force:
+        force['user_forces'] = {}
+    
+    force['user_forces'][user_id] = {
+        "type": force_type,
+        "count": count,
+        "remaining": count
+    }
     save_force(force)
-    await update.message.reply_text(f"Next {count} flips will be: {result.upper()}")
+    
+    await update.message.reply_text(f"User {user_id} will get {force_type.upper()} {count} times!")
 
-async def force_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_user_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner: /removeforce USER_ID"""
     if update.effective_user.id != OWNER_ID:
         return
     
     if len(context.args) < 1:
-        await update.message.reply_text("Usage: /forcedice 6 OR /forcedice off")
+        await update.message.reply_text("Usage: /removeforce USER_ID")
         return
     
-    result = context.args[0].lower()
-    if result == 'off':
-        force["dice_force"] = None
+    user_id = context.args[0]
+    if 'user_forces' in force and user_id in force['user_forces']:
+        del force['user_forces'][user_id]
         save_force(force)
-        await update.message.reply_text("Force mode OFF!")
-        return
-    
-    try:
-        num = int(result)
-        if num < 1 or num > 6:
-            await update.message.reply_text("Number must be 1-6!")
-            return
-    except:
-        await update.message.reply_text("Invalid number!")
-        return
-    
-    force["dice_force"] = num
-    save_force(force)
-    await update.message.reply_text(f"Next dice roll will be: {num}")
+        await update.message.reply_text(f"Force removed for user {user_id}")
+    else:
+        await update.message.reply_text(f"No force found for user {user_id}")
 
-async def force_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         return
     
-    current_force = load_force()
-    coin_status = "OFF"
-    coin_count = 0
-    dice_status = "OFF"
-    
-    if current_force.get("coin_force"):
-        coin_status = current_force["coin_force"].upper()
-        coin_count = current_force.get("coin_force_count", 0)
-    
-    if current_force.get("dice_force"):
-        dice_status = str(current_force["dice_force"])
-    
-    await update.message.reply_text(f"Coin Force: {coin_status} ({coin_count} left)\nDice Force: {dice_status}")
-
-async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
+    if not users:
+        await update.message.reply_text("No users found.")
         return
     
-    msg_lines = [
-        "📊 BOT STATISTICS",
-        "━━━━━━━━━━━━━━━━━━",
-        f"Users: {len(users)}",
-        f"Flips: {stats['coin_flips']}",
-        f"Dice: {stats['dice_rolls']}",
-        f"Heads: {stats['head_count']}",
-        f"Tails: {stats['tail_count']}",
-    ]
-    await update.message.reply_text("\n".join(msg_lines))
+    msg = "👥 USERS LIST\n━━━━━━━━━━━━━━━━━━\n"
+    for uid, u in users.items():
+        status = "🚫 BANNED" if u.get('banned') else "✅ ACTIVE"
+        msg += f"🆔 {uid}\n📛 @{u.get('username', 'None')}\n📌 {status}\n\n"
+    
+    await update.message.reply_text(msg)
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
@@ -292,20 +269,32 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_users(users)
         await update.message.reply_text(f"User {user_id} unbanned!")
 
+async def owner_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+    
+    msg_lines = [
+        "📊 BOT STATISTICS",
+        "━━━━━━━━━━━━━━━━━━",
+        f"👥 Users: {len(users)}",
+        f"🎲 Coin Flips: {stats['coin_flips']}",
+        f"🎲 Dice Rolls: {stats['dice_rolls']}",
+        f"📋 Forced Users: {len(force.get('user_forces', {}))}"
+    ]
+    await update.message.reply_text("\n".join(msg_lines))
+
 # ============ USER COMMANDS ============
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    first_name = user.first_name
-    register_user(user.id, user.username or "NoUsername", first_name)
+    register_user(user.id, user.username or "NoUsername", user.first_name)
     
     msg_lines = [
         "🎲 COIN FLIP & DICE BOT 🎲",
         "━━━━━━━━━━━━━━━━━━",
-        f"✨ Welcome, {to_fancy(first_name)}! ✨",
+        f"✨ Welcome, {to_fancy(user.first_name)}! ✨",
         "",
         "📌 /flipcoin - Flip a coin",
         "📌 /dice - Roll a dice",
-        "📌 /mystats - Your stats",
         "━━━━━━━━━━━━━━━━━━"
     ]
     
@@ -315,71 +304,43 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def flipcoin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.username or "NoUsername", update.effective_user.first_name)
+    user_id_str = str(user_id)
+    username = update.effective_user.username or "NoUsername"
+    first_name = update.effective_user.first_name
+    
+    register_user(user_id, username, first_name)
     
     if is_banned(user_id):
         await update.message.reply_text("❌ You are banned!")
         return
     
-    args = context.args
+    # Check if user has forced result
+    user_force = force.get('user_forces', {}).get(user_id_str)
+    result = None
     
-    # Load force
-    current_force = load_force()
-    force_result = None
-    if current_force.get("coin_force") and current_force.get("coin_force_count", 0) > 0:
-        force_result = current_force["coin_force"]
-        current_force["coin_force_count"] -= 1
-        if current_force["coin_force_count"] <= 0:
-            current_force["coin_force"] = None
-        save_force(current_force)
+    if user_force and user_force['remaining'] > 0:
+        result = user_force['type']
+        user_force['remaining'] -= 1
+        if user_force['remaining'] <= 0:
+            del force['user_forces'][user_id_str]
+        save_force(force)
     
-    # User prediction
-    user_prediction = None
-    if len(args) >= 1 and args[0] in ['head', 'tails', 'tail', 'h', 't']:
-        user_prediction = args[0]
-        if user_prediction in ['h']:
-            user_prediction = 'head'
-        if user_prediction in ['t', 'tails']:
-            user_prediction = 'tail'
-    
-    # Result
-    result = force_result if force_result else random.choice(['head', 'tail'])
+    if not result:
+        result = get_next_coin()
     
     # Stats
     stats["coin_flips"] += 1
-    if result == 'head':
-        stats["head_count"] += 1
-    else:
-        stats["tail_count"] += 1
     save_stats(stats)
     
-    # User stats
-    user = users[str(user_id)]
-    if user_prediction:
-        if user_prediction == result:
-            user['coin_wins'] = user.get('coin_wins', 0) + 1
-        else:
-            user['coin_losses'] = user.get('coin_losses', 0) + 1
-    save_users(users)
-    
-    # Message
-    result_text = "HEADS" if result == 'head' else "TAILS"
-    fancy_result = to_fancy(result_text)
+    # Result text
+    fancy_result = to_fancy(result)
     
     msg_lines = [
-        "🎲 COIN FLIP 🎲",
+        "🪙 COIN FLIP 🪙",
         "━━━━━━━━━━━━━━━━━━",
-        f"🪙 Result: {fancy_result}",
+        f"Result: {fancy_result}",
+        "━━━━━━━━━━━━━━━━━━"
     ]
-    
-    if user_prediction:
-        pred_fancy = to_fancy(user_prediction.upper())
-        if user_prediction == result:
-            msg_lines.append(f"✅ You predicted {pred_fancy}! 🎉")
-        else:
-            msg_lines.append(f"❌ You predicted {pred_fancy}! 😢")
-    
-    msg_lines.append("━━━━━━━━━━━━━━━━━━")
     
     message = "\n".join(msg_lines)
     formatted = format_with_double_emojis(message)
@@ -387,83 +348,42 @@ async def flipcoin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def dice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.username or "NoUsername", update.effective_user.first_name)
+    user_id_str = str(user_id)
+    username = update.effective_user.username or "NoUsername"
+    first_name = update.effective_user.first_name
+    
+    register_user(user_id, username, first_name)
     
     if is_banned(user_id):
         await update.message.reply_text("❌ You are banned!")
         return
     
-    args = context.args
+    # Check if user has forced dice result
+    user_force = force.get('user_forces', {}).get(user_id_str)
     
-    # Load force
-    current_force = load_force()
-    force_result = current_force.get("dice_force")
-    if force_result:
-        current_force["dice_force"] = None
-        save_force(current_force)
-    
-    # User prediction
-    user_prediction = None
-    if len(args) >= 1:
-        try:
-            user_prediction = int(args[0])
-            if user_prediction < 1 or user_prediction > 6:
-                user_prediction = None
-        except:
-            pass
-    
-    # Result
-    result = force_result if force_result else random.randint(1, 6)
+    if user_force and user_force['type'] == 'dice' and user_force['remaining'] > 0:
+        result = user_force['type']  # This will be 'dice', but we need number
+        user_force['remaining'] -= 1
+        if user_force['remaining'] <= 0:
+            del force['user_forces'][user_id_str]
+        save_force(force)
+        # For dice, we need the count as the number
+        dice_number = user_force['count']
+    else:
+        dice_number = random.randint(1, 6)
     
     # Stats
     stats["dice_rolls"] += 1
     save_stats(stats)
     
-    # User stats
-    user = users[str(user_id)]
-    user['dice_plays'] = user.get('dice_plays', 0) + 1
-    save_users(users)
-    
     # Dice emoji
     dice_emoji = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
-    fancy_number = to_fancy(str(result))
+    fancy_number = to_fancy(str(dice_number))
     
     msg_lines = [
         "🎲 DICE ROLL 🎲",
         "━━━━━━━━━━━━━━━━━━",
-        f"{dice_emoji[result]} Result: {fancy_number}",
-    ]
-    
-    if user_prediction:
-        if user_prediction == result:
-            msg_lines.append(f"✅ You predicted {to_fancy(str(user_prediction))}! 🎉")
-        else:
-            msg_lines.append(f"❌ You predicted {to_fancy(str(user_prediction))}! 😢")
-    
-    msg_lines.append("━━━━━━━━━━━━━━━━━━")
-    
-    message = "\n".join(msg_lines)
-    formatted = format_with_double_emojis(message)
-    await update.message.reply_text(formatted, parse_mode="HTML")
-
-async def mystats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    register_user(user_id, update.effective_user.username or "NoUsername", update.effective_user.first_name)
-    
-    user = users[str(user_id)]
-    fancy_wins = to_fancy(str(user.get('coin_wins', 0)))
-    fancy_losses = to_fancy(str(user.get('coin_losses', 0)))
-    fancy_dice = to_fancy(str(user.get('dice_plays', 0)))
-    
-    msg_lines = [
-        "👤 USER STATS 👤",
-        "━━━━━━━━━━━━━━━━━━",
-        f"📛 {to_fancy(user.get('name', 'Unknown'))}",
-        f"🆔 {to_fancy(str(user_id))}",
-        "",
-        f"🎲 Wins: {fancy_wins}",
-        f"🎲 Losses: {fancy_losses}",
-        f"🎲 Dice: {fancy_dice}",
+        f"{dice_emoji[dice_number]} Result: {fancy_number}",
         "━━━━━━━━━━━━━━━━━━"
     ]
     
@@ -473,30 +393,28 @@ async def mystats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ MAIN ============
 def main():
-    load_emojis()
     threading.Thread(target=run_flask, daemon=True).start()
     
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # User commands (Users sirf yehi dekh sakte hain)
+    # User commands (sirf yehi dikhenge users ko)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("flipcoin", flipcoin_command))
     application.add_handler(CommandHandler("dice", dice_command))
-    application.add_handler(CommandHandler("mystats", mystats_command))
     
-    # Owner commands (Yeh hidden hain, users ko nahi dikhenge)
-    application.add_handler(CommandHandler("forcecoin", force_coin))
-    application.add_handler(CommandHandler("forcedice", force_dice))
-    application.add_handler(CommandHandler("forcestatus", force_status))
-    application.add_handler(CommandHandler("stats", bot_stats))
+    # Owner commands (hidden)
+    application.add_handler(CommandHandler("userforce", set_user_force))
+    application.add_handler(CommandHandler("removeforce", remove_user_force))
+    application.add_handler(CommandHandler("users", list_users))
     application.add_handler(CommandHandler("ban", ban_user))
     application.add_handler(CommandHandler("unban", unban_user))
+    application.add_handler(CommandHandler("stats", owner_stats))
     
     print("=" * 50)
     print("🎲 COIN FLIP & DICE BOT STARTED")
     print(f"👑 Owner: {OWNER_ID}")
-    print("✅ Users see only: /flipcoin, /dice, /mystats")
-    print("✅ Premium emojis on every line")
+    print("✅ Coin Pattern: HEAD, TAIL, TAIL, HEAD, HEAD, HEAD, TAIL...")
+    print("✅ Users see only: /flipcoin and /dice")
     print("=" * 50)
     
     application.run_polling()

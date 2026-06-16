@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 from flask import Flask
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # ============ FLASK ============
 flask_app = Flask(__name__)
@@ -22,11 +22,13 @@ def run_flask():
 # ============ CONFIG ============
 BOT_TOKEN = "8592467504:AAEm-p2jCYnWUaq4Yy8MhhMSDI2eTY_Xc6M"
 OWNER_ID = 8986441675
+MAIN_GROUP_LINK = "https://t.me/+0NcOgFZ-qnE4OTVl"
 
 USERS_FILE = "users.json"
+ADMINS_FILE = "admins.json"
+OWNERS_FILE = "owners.json"
 STATS_FILE = "stats.json"
 FORCE_FILE = "force.json"
-EMOJI_FILE = "emojis.json"
 
 # ============ FIXED COIN PATTERN ============
 COIN_PATTERN = ['HEAD', 'TAIL', 'TAIL', 'HEAD', 'HEAD', 'HEAD', 'TAIL', 'HEAD', 'HEAD', 'TAIL', 'TAIL', 'HEAD', 'TAIL']
@@ -76,6 +78,26 @@ def save_users(users):
     with open(USERS_FILE, 'w') as f:
         json.dump(users, f, indent=2)
 
+def load_admins():
+    if os.path.exists(ADMINS_FILE):
+        with open(ADMINS_FILE, 'r') as f:
+            return json.load(f)
+    return [OWNER_ID]
+
+def save_admins(admins):
+    with open(ADMINS_FILE, 'w') as f:
+        json.dump(admins, f, indent=2)
+
+def load_owners():
+    if os.path.exists(OWNERS_FILE):
+        with open(OWNERS_FILE, 'r') as f:
+            return json.load(f)
+    return [OWNER_ID]
+
+def save_owners(owners):
+    with open(OWNERS_FILE, 'w') as f:
+        json.dump(owners, f, indent=2)
+
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
@@ -90,12 +112,32 @@ def load_force():
     if os.path.exists(FORCE_FILE):
         with open(FORCE_FILE, 'r') as f:
             return json.load(f)
-    return {"user_forces": {}}
+    return {"coin_force": None, "coin_force_count": 0, "dice_force": None}
 
 def save_force(force):
     with open(FORCE_FILE, 'w') as f:
         json.dump(force, f, indent=2)
 
+admins = load_admins()
+owners = load_owners()
+users = load_users()
+stats = load_stats()
+force = load_force()
+
+# ============ STYLISH TEXT ============
+def to_fancy(text):
+    fancy_map = {
+        'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'E': '𝐄', 'F': '𝐅', 'G': '𝐆', 'H': '𝐇', 'I': '𝐈',
+        'J': '𝐉', 'K': '𝐊', 'L': '𝐋', 'M': '𝐌', 'N': '𝐍', 'O': '𝐎', 'P': '𝐏', 'Q': '𝐐', 'R': '𝐑',
+        'S': '𝐒', 'T': '𝐓', 'U': '𝐔', 'V': '𝐕', 'W': '𝐖', 'X': '𝐗', 'Y': '𝐘', 'Z': '𝐙',
+        'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝', 'e': '𝐞', 'f': '𝐟', 'g': '𝐠', 'h': '𝐡', 'i': '𝐢',
+        'j': '𝐣', 'k': '𝐤', 'l': '𝐥', 'm': '𝐦', 'n': '𝐧', 'o': '𝐨', 'p': '𝐩', 'q': '𝐪', 'r': '𝐫',
+        's': '𝐬', 't': '𝐭', 'u': '𝐮', 'v': '𝐯', 'w': '𝐰', 'x': '𝐱', 'y': '𝐲', 'z': '𝐳',
+        '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒', '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗'
+    }
+    return ''.join(fancy_map.get(c, c) for c in text)
+
+# ============ EMOJI FUNCTIONS ============
 def get_emoji_html(name):
     if name in PREMIUM_EMOJIS:
         data = PREMIUM_EMOJIS[name]
@@ -121,23 +163,6 @@ def format_with_double_emojis(text):
             formatted_lines.append(line)
     return '\n'.join(formatted_lines)
 
-users = load_users()
-stats = load_stats()
-force = load_force()
-
-# ============ STYLISH TEXT ============
-def to_fancy(text):
-    fancy_map = {
-        'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'E': '𝐄', 'F': '𝐅', 'G': '𝐆', 'H': '𝐇', 'I': '𝐈',
-        'J': '𝐉', 'K': '𝐊', 'L': '𝐋', 'M': '𝐌', 'N': '𝐍', 'O': '𝐎', 'P': '𝐏', 'Q': '𝐐', 'R': '𝐑',
-        'S': '𝐒', 'T': '𝐓', 'U': '𝐔', 'V': '𝐕', 'W': '𝐖', 'X': '𝐗', 'Y': '𝐘', 'Z': '𝐙',
-        'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝', 'e': '𝐞', 'f': '𝐟', 'g': '𝐠', 'h': '𝐡', 'i': '𝐢',
-        'j': '𝐣', 'k': '𝐤', 'l': '𝐥', 'm': '𝐦', 'n': '𝐧', 'o': '𝐨', 'p': '𝐩', 'q': '𝐪', 'r': '𝐫',
-        's': '𝐬', 't': '𝐭', 'u': '𝐮', 'v': '𝐯', 'w': '𝐰', 'x': '𝐱', 'y': '𝐲', 'z': '𝐳',
-        '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒', '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗'
-    }
-    return ''.join(fancy_map.get(c, c) for c in text)
-
 def register_user(user_id, username, first_name):
     if str(user_id) not in users:
         users[str(user_id)] = {
@@ -151,7 +176,13 @@ def register_user(user_id, username, first_name):
         return True
     return False
 
+def is_admin(user_id):
+    return user_id in admins
+
 def is_owner(user_id):
+    return user_id in owners
+
+def is_original_owner(user_id):
     return user_id == OWNER_ID
 
 def is_banned(user_id):
@@ -165,88 +196,195 @@ def get_next_coin():
     pattern_index += 1
     return result
 
-# ============ OWNER COMMANDS ============
-async def set_user_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Owner: /userforce USER_ID head 5"""
+# ============ ADD OWNER ============
+async def add_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("❌ 𝐎𝐧𝐥𝐲 𝐨𝐫𝐢𝐠𝐢𝐧𝐚𝐥 𝐨𝐰𝐧𝐞𝐫 𝐜𝐚𝐧 𝐚𝐝𝐝!")
         return
     
-    if len(context.args) < 3:
-        await update.message.reply_text(
-            "Usage:\n"
-            "/userforce USER_ID head 5 - User ko 5 baar HEAD milega\n"
-            "/userforce USER_ID tail 3 - User ko 3 baar TAIL milega\n"
-            "/userforce USER_ID dice 6 - User ko dice 6 milega\n"
-            "/userforce USER_ID off - User ka force hatana"
-        )
+    if len(context.args) < 1:
+        await update.message.reply_text("𝐔𝐬𝐚𝐠𝐞: `/addowner 𝐔𝐒𝐄𝐑_𝐈𝐃`", parse_mode="Markdown")
         return
     
-    user_id = context.args[0]
-    force_type = context.args[1].lower()
     try:
-        count = int(context.args[2])
+        user_id = int(context.args[0])
+        if user_id in owners:
+            await update.message.reply_text(f"✅ {to_fancy(str(user_id))} 𝐢𝐬 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐚𝐧 𝐨𝐰𝐧𝐞𝐫!")
+            return
+        owners.append(user_id)
+        save_owners(owners)
+        await update.message.reply_text(f"✅ {to_fancy(str(user_id))} 𝐢𝐬 𝐧𝐨𝐰 𝐚𝐧 𝐨𝐰𝐧𝐞𝐫!")
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🎉 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐰 𝐚𝐧 𝐨𝐰𝐧𝐞𝐫!\n\n📌 `/forcecoin head 5` - 𝐅𝐨𝐫𝐜𝐞 𝐡𝐞𝐚𝐝\n📌 `/forcecoin tail 3` - 𝐅𝐨𝐫𝐜𝐞 𝐭𝐚𝐢𝐥\n📌 `/forcedice 6` - 𝐅𝐨𝐫𝐜𝐞 𝐝𝐢𝐜𝐞"
+            )
+        except:
+            pass
     except:
-        await update.message.reply_text("Invalid count!")
-        return
-    
-    if user_id not in users:
-        await update.message.reply_text(f"User {user_id} not found!")
-        return
-    
-    if force_type not in ['head', 'tail', 'dice']:
-        await update.message.reply_text("Use: head, tail, or dice")
-        return
-    
-    if count < 1 or count > 10:
-        await update.message.reply_text("Count must be 1-10!")
-        return
-    
-    if 'user_forces' not in force:
-        force['user_forces'] = {}
-    
-    force['user_forces'][user_id] = {
-        "type": force_type,
-        "count": count,
-        "remaining": count
-    }
-    save_force(force)
-    
-    await update.message.reply_text(f"User {user_id} will get {force_type.upper()} {count} times!")
+        await update.message.reply_text("❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐈𝐃!")
 
-async def remove_user_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Owner: /removeforce USER_ID"""
+# ============ REMOVE OWNER ============
+async def remove_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         return
     
     if len(context.args) < 1:
-        await update.message.reply_text("Usage: /removeforce USER_ID")
+        await update.message.reply_text("Usage: /removeowner USER_ID")
         return
     
-    user_id = context.args[0]
-    if 'user_forces' in force and user_id in force['user_forces']:
-        del force['user_forces'][user_id]
+    try:
+        user_id = int(context.args[0])
+        if user_id == OWNER_ID:
+            await update.message.reply_text("❌ 𝐂𝐚𝐧𝐧𝐨𝐭 𝐫𝐞𝐦𝐨𝐯𝐞 𝐨𝐫𝐢𝐠𝐢𝐧𝐚𝐥 𝐨𝐰𝐧𝐞𝐫!")
+            return
+        if user_id in owners:
+            owners.remove(user_id)
+            save_owners(owners)
+            await update.message.reply_text(f"✅ {to_fancy(str(user_id))} 𝐫𝐞𝐦𝐨𝐯𝐞𝐝!")
+        else:
+            await update.message.reply_text(f"❌ {to_fancy(str(user_id))} 𝐧𝐨𝐭 𝐨𝐰𝐧𝐞𝐫!")
+    except:
+        await update.message.reply_text("❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐈𝐃!")
+
+# ============ FORCE COIN (Only Owners) ============
+async def force_coin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("𝐔𝐬𝐚𝐠𝐞:\n/forcecoin head 5\n/forcecoin tail 3\n/forcecoin off")
+        return
+    
+    result = context.args[0].lower()
+    if result == 'off':
+        force["coin_force"] = None
+        force["coin_force_count"] = 0
         save_force(force)
-        await update.message.reply_text(f"Force removed for user {user_id}")
-    else:
-        await update.message.reply_text(f"No force found for user {user_id}")
-
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("✅ 𝐅𝐨𝐫𝐜𝐞 𝐎𝐅𝐅!")
         return
     
-    if not users:
-        await update.message.reply_text("No users found.")
+    if result not in ['head', 'tail']:
+        await update.message.reply_text("❌ 𝐔𝐬𝐞 'head' 𝐨𝐫 'tail'!")
         return
     
-    msg = "👥 USERS LIST\n━━━━━━━━━━━━━━━━━━\n"
-    for uid, u in users.items():
-        status = "🚫 BANNED" if u.get('banned') else "✅ ACTIVE"
-        msg += f"🆔 {uid}\n📛 @{u.get('username', 'None')}\n📌 {status}\n\n"
+    try:
+        count = int(context.args[1])
+        if count < 1 or count > 10:
+            await update.message.reply_text("❌ 𝐂𝐨𝐮𝐧𝐭 𝟏-𝟏𝟎!")
+            return
+    except:
+        await update.message.reply_text("❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐜𝐨𝐮𝐧𝐭!")
+        return
     
-    await update.message.reply_text(msg)
+    force["coin_force"] = result
+    force["coin_force_count"] = count
+    save_force(force)
+    
+    await update.message.reply_text(f"✅ {to_fancy(str(count))} {to_fancy(result.upper())} 𝐚𝐚𝐲𝐞𝐧𝐠𝐞!")
 
+# ============ FORCE DICE (Only Owners) ============
+async def force_dice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("𝐔𝐬𝐚𝐠𝐞:\n/forcedice 6\n/forcedice off")
+        return
+    
+    result = context.args[0].lower()
+    if result == 'off':
+        force["dice_force"] = None
+        save_force(force)
+        await update.message.reply_text("✅ 𝐅𝐨𝐫𝐜𝐞 𝐎𝐅𝐅!")
+        return
+    
+    try:
+        num = int(result)
+        if num < 1 or num > 6:
+            await update.message.reply_text("❌ 𝟏-𝟔 𝐝𝐚𝐚𝐥𝐨!")
+            return
+    except:
+        await update.message.reply_text("❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝!")
+        return
+    
+    force["dice_force"] = num
+    save_force(force)
+    await update.message.reply_text(f"✅ 𝐍𝐞𝐱𝐭 𝐝𝐢𝐜𝐞: {to_fancy(str(num))}")
+
+# ============ FORCE STATUS ============
+async def force_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        return
+    
+    coin_status = "OFF"
+    coin_count = 0
+    dice_status = "OFF"
+    
+    if force.get("coin_force"):
+        coin_status = force["coin_force"].upper()
+        coin_count = force.get("coin_force_count", 0)
+    
+    if force.get("dice_force"):
+        dice_status = str(force["dice_force"])
+    
+    await update.message.reply_text(
+        f"🔧 𝐅𝐎𝐑𝐂𝐄 𝐒𝐓𝐀𝐓𝐔𝐒\n━━━━━━━━━━━━━━━━━━\n\n"
+        f"🪙 𝐂𝐨𝐢𝐧: {coin_status} ({coin_count} 𝐥𝐞𝐟𝐭)\n"
+        f"🎲 𝐃𝐢𝐜𝐞: {dice_status}"
+    )
+
+# ============ APPROVE ADMIN ============
+async def approve_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        await update.message.reply_text("❌ 𝐎𝐧𝐥𝐲 𝐨𝐰𝐧𝐞𝐫𝐬 𝐜𝐚𝐧 𝐚𝐩𝐩𝐫𝐨𝐯𝐞!")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("𝐔𝐬𝐚𝐠𝐞: `/approve 𝐔𝐒𝐄𝐑_𝐈𝐃`", parse_mode="Markdown")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        if user_id in admins:
+            await update.message.reply_text(f"✅ {to_fancy(str(user_id))} 𝐢𝐬 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐚𝐝𝐦𝐢𝐧!")
+            return
+        admins.append(user_id)
+        save_admins(admins)
+        await update.message.reply_text(f"✅ {to_fancy(str(user_id))} 𝐢𝐬 𝐧𝐨𝐰 𝐚𝐧 𝐚𝐝𝐦𝐢𝐧!")
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🎉 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐰 𝐚𝐧 𝐚𝐝𝐦𝐢𝐧!\n\n📌 `/flipcoin` - 𝐅𝐥𝐢𝐩\n📌 `/dice` - 𝐑𝐨𝐥𝐥"
+            )
+        except:
+            pass
+    except:
+        await update.message.reply_text("❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐈𝐃!")
+
+async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: /removeadmin USER_ID")
+        return
+    try:
+        user_id = int(context.args[0])
+        if user_id == OWNER_ID:
+            await update.message.reply_text("❌ 𝐂𝐚𝐧𝐧𝐨𝐭 𝐫𝐞𝐦𝐨𝐯𝐞 𝐨𝐰𝐧𝐞𝐫!")
+            return
+        if user_id in admins:
+            admins.remove(user_id)
+            save_admins(admins)
+            await update.message.reply_text(f"✅ {to_fancy(str(user_id))} 𝐫𝐞𝐦𝐨𝐯𝐞𝐝!")
+        else:
+            await update.message.reply_text(f"❌ {to_fancy(str(user_id))} 𝐧𝐨𝐭 𝐚𝐝𝐦𝐢𝐧!")
+    except:
+        await update.message.reply_text("❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐈𝐃!")
+
+# ============ BAN/UNBAN ============
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
+    if not is_owner(update.effective_user.id):
         return
     if len(context.args) < 1:
         await update.message.reply_text("Usage: /ban USER_ID")
@@ -255,10 +393,10 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in users:
         users[user_id]['banned'] = True
         save_users(users)
-        await update.message.reply_text(f"User {user_id} banned!")
+        await update.message.reply_text(f"✅ {to_fancy(user_id)} 𝐛𝐚𝐧𝐧𝐞𝐝!")
 
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
+    if not is_owner(update.effective_user.id):
         return
     if len(context.args) < 1:
         await update.message.reply_text("Usage: /unban USER_ID")
@@ -267,129 +405,148 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in users:
         users[user_id]['banned'] = False
         save_users(users)
-        await update.message.reply_text(f"User {user_id} unbanned!")
+        await update.message.reply_text(f"✅ {to_fancy(user_id)} 𝐮𝐧𝐛𝐚𝐧𝐧𝐞𝐝!")
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        return
+    if not users:
+        await update.message.reply_text("📭 𝐍𝐨 𝐮𝐬𝐞𝐫𝐬.")
+        return
+    msg = "👥 𝐔𝐒𝐄𝐑𝐒\n━━━━━━━━━━━━━━━━━━\n"
+    for uid, u in users.items():
+        status = "🚫" if u.get('banned') else "✅"
+        admin_tag = "👑" if int(uid) in admins else ""
+        owner_tag = "⭐" if int(uid) in owners else ""
+        msg += f"{status} {to_fancy(uid)}\n📛 @{u.get('username', 'None')} {admin_tag}{owner_tag}\n\n"
+    await update.message.reply_text(msg)
 
 async def owner_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
+    if not is_owner(update.effective_user.id):
         return
-    
-    msg_lines = [
-        "📊 BOT STATISTICS",
-        "━━━━━━━━━━━━━━━━━━",
-        f"👥 Users: {len(users)}",
-        f"🎲 Coin Flips: {stats['coin_flips']}",
-        f"🎲 Dice Rolls: {stats['dice_rolls']}",
-        f"📋 Forced Users: {len(force.get('user_forces', {}))}"
-    ]
-    await update.message.reply_text("\n".join(msg_lines))
+    msg = f"""
+📊 𝐒𝐓𝐀𝐓𝐒
+━━━━━━━━━━━━━━━━━━
+👥 𝐔𝐬𝐞𝐫𝐬: {to_fancy(str(len(users)))}
+👑 𝐀𝐝𝐦𝐢𝐧𝐬: {to_fancy(str(len(admins)))}
+⭐ 𝐎𝐰𝐧𝐞𝐫𝐬: {to_fancy(str(len(owners)))}
+🎲 𝐅𝐥𝐢𝐩𝐬: {to_fancy(str(stats['coin_flips']))}
+🎲 𝐃𝐢𝐜𝐞: {to_fancy(str(stats['dice_rolls']))}
+━━━━━━━━━━━━━━━━━━
+"""
+    await update.message.reply_text(msg)
 
 # ============ USER COMMANDS ============
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    chat_type = update.effective_chat.type
+    
+    if chat_type == 'private':
+        msg = f"""
+⚠️ 𝐎𝐍𝐋𝐘 𝐖𝐎𝐑𝐊𝐒 𝐈𝐍 𝐆𝐑𝐎𝐔𝐏
+━━━━━━━━━━━━━━━━━━
+
+🔗 𝐉𝐨𝐢𝐧: {MAIN_GROUP_LINK}
+"""
+        formatted = format_with_double_emojis(msg)
+        await update.message.reply_text(formatted, parse_mode="HTML")
+        return
+    
     register_user(user.id, user.username or "NoUsername", user.first_name)
     
-    msg_lines = [
-        "🎲 COIN FLIP & DICE BOT 🎲",
-        "━━━━━━━━━━━━━━━━━━",
-        f"✨ Welcome, {to_fancy(user.first_name)}! ✨",
-        "",
-        "📌 /flipcoin - Flip a coin",
-        "📌 /dice - Roll a dice",
-        "━━━━━━━━━━━━━━━━━━"
-    ]
-    
-    message = "\n".join(msg_lines)
-    formatted = format_with_double_emojis(message)
+    msg = f"""
+🎲 𝐂𝐎𝐈𝐍 𝐅𝐋𝐈𝐏 & 𝐃𝐈𝐂𝐄 🎲
+━━━━━━━━━━━━━━━━━━
+
+✨ {to_fancy(f'𝐖𝐞𝐥𝐜𝐨𝐦𝐞, {user.first_name}!')} ✨
+
+📌 `/flipcoin` - 𝐅𝐥𝐢𝐩
+📌 `/dice` - 𝐑𝐨𝐥𝐥
+━━━━━━━━━━━━━━━━━━
+"""
+    formatted = format_with_double_emojis(msg)
     await update.message.reply_text(formatted, parse_mode="HTML")
 
 async def flipcoin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_id_str = str(user_id)
-    username = update.effective_user.username or "NoUsername"
-    first_name = update.effective_user.first_name
     
-    register_user(user_id, username, first_name)
-    
-    if is_banned(user_id):
-        await update.message.reply_text("❌ You are banned!")
+    if not is_admin(user_id):
+        msg = "❌ 𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲!"
+        await update.message.reply_text(msg)
         return
     
-    # Check if user has forced result
-    user_force = force.get('user_forces', {}).get(user_id_str)
-    result = None
+    register_user(user_id, update.effective_user.username or "NoUsername", update.effective_user.first_name)
     
-    if user_force and user_force['remaining'] > 0:
-        result = user_force['type']
-        user_force['remaining'] -= 1
-        if user_force['remaining'] <= 0:
-            del force['user_forces'][user_id_str]
+    if is_banned(user_id):
+        await update.message.reply_text("❌ 𝐁𝐚𝐧𝐧𝐞𝐝!")
+        return
+    
+    # Check global force (set by owners)
+    result = None
+    if force.get("coin_force") and force.get("coin_force_count", 0) > 0:
+        result = force["coin_force"]
+        force["coin_force_count"] -= 1
+        if force["coin_force_count"] <= 0:
+            force["coin_force"] = None
         save_force(force)
     
     if not result:
         result = get_next_coin()
     
-    # Stats
     stats["coin_flips"] += 1
     save_stats(stats)
     
-    # Result text
-    fancy_result = to_fancy(result)
-    
-    msg_lines = [
-        "🪙 COIN FLIP 🪙",
-        "━━━━━━━━━━━━━━━━━━",
-        f"Result: {fancy_result}",
-        "━━━━━━━━━━━━━━━━━━"
-    ]
-    
-    message = "\n".join(msg_lines)
-    formatted = format_with_double_emojis(message)
+    msg = f"""
+🪙 𝐂𝐎𝐈𝐍 𝐅𝐋𝐈𝐏 🪙
+━━━━━━━━━━━━━━━━━━
+
+{to_fancy(f'𝐑𝐞𝐬𝐮𝐥𝐭: {result}')}
+
+━━━━━━━━━━━━━━━━━━
+"""
+    formatted = format_with_double_emojis(msg)
     await update.message.reply_text(formatted, parse_mode="HTML")
 
 async def dice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_id_str = str(user_id)
-    username = update.effective_user.username or "NoUsername"
-    first_name = update.effective_user.first_name
     
-    register_user(user_id, username, first_name)
-    
-    if is_banned(user_id):
-        await update.message.reply_text("❌ You are banned!")
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ 𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲!")
         return
     
-    # Check if user has forced dice result
-    user_force = force.get('user_forces', {}).get(user_id_str)
+    register_user(user_id, update.effective_user.username or "NoUsername", update.effective_user.first_name)
     
-    if user_force and user_force['type'] == 'dice' and user_force['remaining'] > 0:
-        result = user_force['type']  # This will be 'dice', but we need number
-        user_force['remaining'] -= 1
-        if user_force['remaining'] <= 0:
-            del force['user_forces'][user_id_str]
+    if is_banned(user_id):
+        await update.message.reply_text("❌ 𝐁𝐚𝐧𝐧𝐞𝐝!")
+        return
+    
+    # Check global dice force
+    dice_number = force.get("dice_force")
+    if dice_number:
+        force["dice_force"] = None
         save_force(force)
-        # For dice, we need the count as the number
-        dice_number = user_force['count']
     else:
         dice_number = random.randint(1, 6)
     
-    # Stats
     stats["dice_rolls"] += 1
     save_stats(stats)
     
-    # Dice emoji
     dice_emoji = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
-    fancy_number = to_fancy(str(dice_number))
     
-    msg_lines = [
-        "🎲 DICE ROLL 🎲",
-        "━━━━━━━━━━━━━━━━━━",
-        f"{dice_emoji[dice_number]} Result: {fancy_number}",
-        "━━━━━━━━━━━━━━━━━━"
-    ]
-    
-    message = "\n".join(msg_lines)
-    formatted = format_with_double_emojis(message)
+    msg = f"""
+🎲 𝐃𝐈𝐂𝐄 𝐑𝐎𝐋𝐋 🎲
+━━━━━━━━━━━━━━━━━━
+
+{dice_emoji[dice_number]} {to_fancy(f'𝐑𝐞𝐬𝐮𝐥𝐭: {dice_number}')}
+
+━━━━━━━━━━━━━━━━━━
+"""
+    formatted = format_with_double_emojis(msg)
     await update.message.reply_text(formatted, parse_mode="HTML")
+
+# ============ UNKNOWN COMMANDS ============
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return
 
 # ============ MAIN ============
 def main():
@@ -397,24 +554,42 @@ def main():
     
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # User commands (sirf yehi dikhenge users ko)
+    # User commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("flipcoin", flipcoin_command))
     application.add_handler(CommandHandler("dice", dice_command))
     
-    # Owner commands (hidden)
-    application.add_handler(CommandHandler("userforce", set_user_force))
-    application.add_handler(CommandHandler("removeforce", remove_user_force))
+    # Owner management
+    application.add_handler(CommandHandler("addowner", add_owner))
+    application.add_handler(CommandHandler("removeowner", remove_owner))
+    
+    # Admin management
+    application.add_handler(CommandHandler("approve", approve_admin))
+    application.add_handler(CommandHandler("removeadmin", remove_admin))
+    
+    # Owner force commands
+    application.add_handler(CommandHandler("forcecoin", force_coin))
+    application.add_handler(CommandHandler("forcedice", force_dice))
+    application.add_handler(CommandHandler("forcestatus", force_status))
+    
+    # Owner management commands
     application.add_handler(CommandHandler("users", list_users))
     application.add_handler(CommandHandler("ban", ban_user))
     application.add_handler(CommandHandler("unban", unban_user))
     application.add_handler(CommandHandler("stats", owner_stats))
     
+    # Unknown commands - ignore
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    
     print("=" * 50)
     print("🎲 COIN FLIP & DICE BOT STARTED")
-    print(f"👑 Owner: {OWNER_ID}")
-    print("✅ Coin Pattern: HEAD, TAIL, TAIL, HEAD, HEAD, HEAD, TAIL...")
-    print("✅ Users see only: /flipcoin and /dice")
+    print(f"👑 Original Owner: {OWNER_ID}")
+    print(f"⭐ Owners: {owners}")
+    print(f"👑 Admins: {admins}")
+    print("✅ /addowner - Add new owner")
+    print("✅ /forcecoin head 5 - Force coin")
+    print("✅ /forcecoin tail 3 - Force tail")
+    print("✅ /forcedice 6 - Force dice")
     print("=" * 50)
     
     application.run_polling()
